@@ -394,6 +394,8 @@ bun run knip
 
 发布镜像位于 [Docker Hub](https://hub.docker.com/r/tamakiramimy/copilot-api-muluser)。每个时间戳发布使用不可变 UTC 标签 `vYYYYmmddHHmmss`，`latest` 始终指向最近一次成功发布。镜像支持 `linux/amd64` 与 `linux/arm64`。
 
+推送符合该 UTC 格式的标签后，GitHub Actions 会自动发布 Docker Hub 镜像及对应的 GitHub Release；也可以对已有 UTC 发布标签手动触发工作流。
+
 ## Premium Interaction 说明
 
 - **`premium_interactions` 来自 Copilot/GitHub 上游计量，不是这个代理自行定义的计费模型。** `/usage` 端点只是透传并展示上游返回的使用量数据。

@@ -128,7 +128,7 @@ echo "Docker localhost smoke passed"
 echo "Starting docker compose localhost smoke"
 compose_cmd up -d
 
-compose_container_id="$(compose_cmd ps -q copilot-api)"
+compose_container_id="$(compose_cmd ps -q copilot-api-muluser)"
 if [[ -z "${compose_container_id}" ]]; then
   echo "Failed to resolve docker compose container id"
   compose_cmd ps

@@ -18,6 +18,10 @@ docker pull tamakiramimy/copilot-api-muluser:vYYYYmmddHHmmss
 
 Images support `linux/amd64` and `linux/arm64`.
 
+## Publishing
+
+Pushing a UTC tag that matches `vYYYYmmddHHmmss` automatically runs GitHub Actions to publish the immutable version tag and update `latest` on Docker Hub. The same tag also creates or updates the corresponding GitHub Release. Both workflows can be manually dispatched for an existing UTC release tag.
+
 ## Run
 
 ```bash

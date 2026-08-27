@@ -418,6 +418,8 @@ bun run knip
 
 Published images are available at [Docker Hub](https://hub.docker.com/r/tamakiramimy/copilot-api-muluser). Each timestamp release uses an immutable UTC tag in the form `vYYYYmmddHHmmss`; `latest` tracks the newest successful release. Images are multi-platform for `linux/amd64` and `linux/arm64`.
 
+Pushing a matching UTC tag automatically runs GitHub Actions to publish both the Docker Hub image and the corresponding GitHub Release. The workflows can also be manually dispatched for an existing UTC release tag.
+
 ## Premium Interaction Notes
 
 - **Premium interaction counts come from Copilot/GitHub, not from this proxy inventing its own billing model.** The `/usage` endpoint simply exposes the upstream Copilot usage data.
