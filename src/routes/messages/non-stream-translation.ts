@@ -32,9 +32,11 @@ export const THINKING_TEXT = "Thinking..."
 // Payload translation
 export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
+  selectedModel?: Model,
 ): ChatCompletionsPayload {
   const modelId = payload.model
-  const model = state.models?.data.find((m) => m.id === modelId)
+  const model =
+    selectedModel ?? state.models?.data.find((m) => m.id === modelId)
   const thinkingBudget = getThinkingBudget(payload, model)
   return {
     model: modelId,
@@ -48,7 +50,6 @@ export function translateToOpenAI(
     stream: payload.stream,
     temperature: payload.temperature,
     top_p: payload.top_p,
-    user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
     thinking_budget: thinkingBudget,

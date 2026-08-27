@@ -1,16 +1,26 @@
 import { Hono } from "hono"
 
+import type { Model } from "~/services/copilot/get-models"
+
+import {
+  accountRuntimeRegistry,
+  type AccountRuntime,
+} from "~/lib/account-runtime"
 import {
   addAccount,
   getAccounts,
   getActiveAccount,
   removeAccount,
+  setAccountEnabled,
   setActiveAccount,
+  setAccountType,
   type Account,
 } from "~/lib/accounts"
 import { getConfig, saveConfig } from "~/lib/config"
-import { copilotTokenManager } from "~/lib/copilot-token-manager"
+import { getAccountCopilotTokenManager } from "~/lib/copilot-token-manager"
 import { state } from "~/lib/state"
+import { cacheModels } from "~/lib/utils"
+import { copilotRequest } from "~/services/copilot-provider/create-provider"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { getGitHubUser } from "~/services/github/get-user"
 import { pollAccessTokenOnce } from "~/services/github/poll-access-token"
@@ -35,6 +45,13 @@ adminRoutes.get("/api/accounts", async (c) => {
     accountType: account.accountType,
     createdAt: account.createdAt,
     isActive: account.id === data.activeAccountId,
+    enabled: account.enabled ?? true,
+    activeRequests: accountRuntimeRegistry.getActiveLeaseCount(account.id),
+    modelCount:
+      accountRuntimeRegistry.get(account.id)?.models?.data.length ?? 0,
+    cooldownUntil:
+      accountRuntimeRegistry.get(account.id)?.cooldownUntil ?? null,
+    lastError: accountRuntimeRegistry.get(account.id)?.lastError ?? null,
   }))
 
   return c.json({
@@ -80,26 +97,6 @@ adminRoutes.post("/api/accounts/:id/activate", async (c) => {
     )
   }
 
-  // Update state with new token
-  state.githubToken = account.token
-  state.accountType = account.accountType
-
-  // Refresh Copilot token with new account
-  try {
-    copilotTokenManager.clear()
-    await copilotTokenManager.getToken()
-  } catch {
-    return c.json(
-      {
-        error: {
-          message: "Failed to refresh Copilot token after account switch",
-          type: "token_error",
-        },
-      },
-      500,
-    )
-  }
-
   return c.json({
     success: true,
     account: {
@@ -111,9 +108,211 @@ adminRoutes.post("/api/accounts/:id/activate", async (c) => {
   })
 })
 
+adminRoutes.put("/api/accounts/:id/type", async (c) => {
+  const body = await c.req.json<{ accountType?: string }>()
+  const accountType = body.accountType
+  if (
+    accountType !== "individual"
+    && accountType !== "business"
+    && accountType !== "enterprise"
+  ) {
+    return c.json(
+      {
+        error: {
+          message: '"accountType" must be individual, business, or enterprise',
+          type: "validation_error",
+        },
+      },
+      400,
+    )
+  }
+
+  const account = await setAccountType(c.req.param("id"), accountType)
+  if (!account) {
+    return c.json(
+      { error: { message: "Account not found", type: "not_found" } },
+      404,
+    )
+  }
+
+  const runtime = accountRuntimeRegistry.upsert(account)
+  const tokenManager = getAccountCopilotTokenManager(runtime)
+  tokenManager.clear()
+  try {
+    await tokenManager.getToken()
+    await cacheModels(runtime)
+    runtime.lastError = undefined
+  } catch {
+    runtime.lastError = "Failed to refresh Copilot access for this account type"
+    return c.json(
+      {
+        error: {
+          message: runtime.lastError,
+          type: "copilot_connection_error",
+        },
+      },
+      502,
+    )
+  }
+
+  return c.json({
+    success: true,
+    account: {
+      id: account.id,
+      accountType: account.accountType,
+      modelCount: runtime.models?.data.length ?? 0,
+    },
+  })
+})
+
+adminRoutes.post("/api/models/:model/test", async (c) => {
+  const activeAccount = await getActiveAccount()
+  const runtime =
+    activeAccount ? accountRuntimeRegistry.get(activeAccount.id) : undefined
+  const modelId = c.req.param("model")
+
+  if (!runtime) {
+    return c.json(
+      { error: { message: "No active account runtime", type: "auth_error" } },
+      401,
+    )
+  }
+
+  const model = runtime.models?.data.find(
+    (candidate) => candidate.id === modelId,
+  )
+  if (!model) {
+    return c.json(
+      {
+        error: {
+          message: "Model not available for the active account",
+          type: "not_found",
+        },
+      },
+      404,
+    )
+  }
+
+  try {
+    const result = await testModel(runtime, model)
+    return c.json({
+      success: true,
+      endpoint: result.endpoint,
+      prompt: `请回复一个${model.id}`,
+      output: result.output,
+    })
+  } catch (error) {
+    runtime.lastError = "Model test request failed"
+    return c.json(
+      {
+        error: {
+          message: error instanceof Error ? error.message : "Model test failed",
+          type: "model_test_error",
+        },
+      },
+      502,
+    )
+  }
+})
+
+const testModel = async (
+  runtime: AccountRuntime,
+  model: Model,
+): Promise<{ endpoint: string; output: string }> => {
+  const prompt = `请回复一个${model.id}`
+  const endpoint = getTestEndpoint(model)
+  let body: Record<string, unknown>
+  if (endpoint === "/responses") {
+    body = { model: model.id, input: prompt, stream: false }
+  } else if (endpoint === "/v1/messages") {
+    body = {
+      model: model.id,
+      max_tokens: 100,
+      messages: [{ role: "user", content: prompt }],
+      stream: false,
+    }
+  } else {
+    body = {
+      model: model.id,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 100,
+      stream: false,
+    }
+  }
+  const response = await copilotRequest({ path: endpoint, body }, runtime)
+  return { endpoint, output: extractTestOutput(await response.json()) }
+}
+
+const getTestEndpoint = (model: Model): string => {
+  const endpoints = model.supported_endpoints ?? []
+  if (endpoints.includes("/responses")) return "/responses"
+  if (endpoints.includes("/v1/messages")) return "/v1/messages"
+  if (endpoints.includes("/chat/completions")) return "/chat/completions"
+  throw new Error("The model does not declare a supported test endpoint")
+}
+
+const extractTestOutput = (result: unknown): string => {
+  if (!result || typeof result !== "object") {
+    return String(result)
+  }
+  const record = result as Record<string, unknown>
+  if (typeof record.output_text === "string") return record.output_text
+
+  const output = record.output
+  if (Array.isArray(output)) {
+    const text = output.flatMap((item) => getContentText(item)).join("\n")
+    if (text) return text
+  }
+
+  const choices = record.choices
+  if (Array.isArray(choices)) {
+    const [firstChoice] = choices as Array<unknown>
+    if (isRecord(firstChoice) && isRecord(firstChoice.message)) {
+      const content = firstChoice.message.content
+      if (typeof content === "string") return content
+    }
+  }
+
+  const contentText = getContentText(record)
+  if (contentText.length > 0) return contentText.join("\n")
+
+  return "Test completed without a displayable text response."
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object"
+
+const getContentText = (value: unknown): Array<string> => {
+  if (!isRecord(value)) return []
+  const record = value
+  if (typeof record.text === "string") return [record.text]
+
+  const content = record.content
+  if (!Array.isArray(content)) return []
+  return content.flatMap((item) => getContentText(item))
+}
+
 // Delete an account
 adminRoutes.delete("/api/accounts/:id", async (c) => {
   const accountId = c.req.param("id")
+
+  const account = await setAccountEnabled(accountId, false)
+  if (!account) {
+    return c.json(
+      {
+        error: {
+          message: "Account not found",
+          type: "not_found",
+        },
+      },
+      404,
+    )
+  }
+
+  accountRuntimeRegistry.setEnabled(accountId, false)
+  if (accountRuntimeRegistry.getActiveLeaseCount(accountId) > 0) {
+    return c.json({ success: true, draining: true })
+  }
 
   const removed = await removeAccount(accountId)
 
@@ -129,23 +328,7 @@ adminRoutes.delete("/api/accounts/:id", async (c) => {
     )
   }
 
-  // If we removed the current account, update state
-  const activeAccount = await getActiveAccount()
-  if (activeAccount) {
-    state.githubToken = activeAccount.token
-    state.accountType = activeAccount.accountType
-
-    // Refresh Copilot token
-    try {
-      copilotTokenManager.clear()
-      await copilotTokenManager.getToken()
-    } catch {
-      // Ignore refresh errors on delete
-    }
-  } else {
-    state.githubToken = undefined
-    copilotTokenManager.clear()
-  }
+  accountRuntimeRegistry.remove(accountId)
 
   return c.json({ success: true })
 })
@@ -188,19 +371,15 @@ type CreateAccountResult =
 /**
  * Create and save account after successful authorization
  */
-/* eslint-disable require-atomic-updates */
+
 async function createAccountFromToken(
   token: string,
   accountType: string,
 ): Promise<CreateAccountResult> {
-  const previousToken = state.githubToken
-  state.githubToken = token
-
   let user
   try {
-    user = await getGitHubUser()
+    user = await getGitHubUser(token)
   } catch {
-    state.githubToken = previousToken
     return { success: false, error: "Failed to get user info" }
   }
 
@@ -219,20 +398,17 @@ async function createAccountFromToken(
   }
 
   await addAccount(account)
-
-  state.githubToken = token
-  state.accountType = account.accountType
+  const runtime = accountRuntimeRegistry.upsert(account)
 
   try {
-    copilotTokenManager.clear()
-    await copilotTokenManager.getToken()
+    await getAccountCopilotTokenManager(runtime).getToken()
+    await cacheModels(runtime)
   } catch {
     // Continue even if Copilot token fails
   }
 
   return { success: true, account }
 }
-/* eslint-enable require-atomic-updates */
 
 // Poll for access token after user authorizes
 
@@ -314,10 +490,14 @@ adminRoutes.post("/api/auth/poll", async (c) => {
 // Get current auth status
 adminRoutes.get("/api/auth/status", async (c) => {
   const activeAccount = await getActiveAccount()
+  const activeRuntime =
+    activeAccount ? accountRuntimeRegistry.get(activeAccount.id) : undefined
 
   return c.json({
     authenticated:
-      Boolean(state.githubToken) && copilotTokenManager.hasValidToken(),
+      activeRuntime !== undefined
+      && Boolean(activeRuntime.copilotToken)
+      && activeRuntime.copilotTokenExpiresAt > Date.now() / 1000 + 60,
     hasAccounts: Boolean(activeAccount),
     activeAccount:
       activeAccount ?

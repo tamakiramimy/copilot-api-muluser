@@ -2,6 +2,8 @@ import consola from "consola"
 
 import { getCopilotToken } from "~/services/github/get-copilot-token"
 
+import type { AccountRuntime } from "./account-runtime"
+
 import { state } from "./state"
 
 /**
@@ -119,3 +121,78 @@ class CopilotTokenManager {
 
 // Export singleton instance
 export const copilotTokenManager = new CopilotTokenManager()
+
+class AccountCopilotTokenManager {
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null
+  private refreshPromise: Promise<void> | null = null
+  private readonly runtime: AccountRuntime
+
+  constructor(runtime: AccountRuntime) {
+    this.runtime = runtime
+  }
+
+  async getToken(): Promise<string> {
+    const now = Date.now() / 1000
+    if (
+      !this.runtime.copilotToken
+      || this.runtime.copilotTokenExpiresAt - now < 60
+    ) {
+      if (!this.refreshPromise) {
+        this.refreshPromise = this.refreshToken().finally(() => {
+          this.refreshPromise = null
+        })
+      }
+      await this.refreshPromise
+    }
+
+    if (!this.runtime.copilotToken) {
+      throw new Error("Failed to obtain Copilot token")
+    }
+    return this.runtime.copilotToken
+  }
+
+  async refreshToken(): Promise<void> {
+    const { token, expires_at, refresh_in } = await getCopilotToken(
+      this.runtime,
+    )
+    this.runtime.copilotToken = token
+    this.runtime.copilotTokenExpiresAt = expires_at
+    this.scheduleRefresh(refresh_in)
+  }
+
+  clear(): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer)
+      this.refreshTimer = null
+    }
+    this.refreshPromise = null
+    this.runtime.copilotToken = undefined
+    this.runtime.copilotTokenExpiresAt = 0
+  }
+
+  private scheduleRefresh(refreshIn: number): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer)
+    }
+    const refreshMs = Math.max((refreshIn - 60) * 1000, 60000)
+    this.refreshTimer = setTimeout(() => {
+      this.refreshToken().catch(() => this.clear())
+    }, refreshMs)
+  }
+}
+
+const accountTokenManagers = new WeakMap<
+  AccountRuntime,
+  AccountCopilotTokenManager
+>()
+
+export const getAccountCopilotTokenManager = (
+  runtime: AccountRuntime,
+): AccountCopilotTokenManager => {
+  let manager = accountTokenManagers.get(runtime)
+  if (!manager) {
+    manager = new AccountCopilotTokenManager(runtime)
+    accountTokenManagers.set(runtime, manager)
+  }
+  return manager
+}

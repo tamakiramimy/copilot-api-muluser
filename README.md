@@ -127,7 +127,7 @@ sequenceDiagram
 
 - **OpenAI & Anthropic Compatibility**: Exposes GitHub Copilot as an OpenAI-compatible (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, `/v1/responses`) and Anthropic-compatible (`/v1/messages`) API.
 - **Web-based Account Management**: Add and manage multiple GitHub accounts through a simple web interface at `/admin`.
-- **Multi-Account Support**: Switch between different GitHub accounts without restarting the server.
+- **Multi-Account Scheduling**: New sessions are distributed across healthy accounts, while subsequent requests in the same session remain on the assigned account.
 - **Docker-First Deployment**: Optimized for containerized deployment with persistent data storage.
 - **Usage Monitoring**: View your Copilot API usage and quota information via `/usage` endpoint.
 - **Rate Limit Control**: Manage API usage with rate-limiting options to prevent errors from rapid requests.
@@ -151,6 +151,30 @@ docker compose logs -f
 Then visit **http://localhost:4141/admin** to add your GitHub account.
 
 The provided Docker setup publishes port `4141` to **localhost only**. This is intentional: `/admin` and `/token` are local-management surfaces and should not be exposed to your LAN.
+
+## Native Bun Start
+
+Run the proxy directly on the host without Docker:
+
+```bash
+bun install --frozen-lockfile
+
+XDG_DATA_HOME="$HOME/Library/Application Support/copilot-api" \
+HOST=127.0.0.1 \
+PORT=4142 \
+PROXY_ENV=true \
+bun run start
+```
+
+Visit `http://127.0.0.1:4142/admin` and add each GitHub account through Device Flow. Each account maintains independent GitHub/Copilot tokens, model cache, request rate state, and one concurrent request slot by default. The server schedules all enabled accounts from the first request; it does not wait for one account to exhaust its quota before using another.
+
+For multiple local clients, configure `COPILOT_API_CLIENT_KEYS` with deployment-owned API keys. The key maps the caller to an internal namespace, preventing short session IDs from different clients from colliding. This is client authentication only: clients do not send a GitHub account ID or end-user identifier.
+
+```bash
+COPILOT_API_CLIENT_KEYS='dsh-electron=<secret-1>,sub2api=<secret-2>'
+```
+
+Use a separate key in DeepSeek Harness Electron and sub2api. DSH should use the OpenAI Responses endpoint, which automatically includes a request session ID. The proxy hashes that opaque ID, selects an eligible account by active load, and keeps the session on that account. Accounts without the requested model, disabled accounts, and accounts at their configured concurrent-request limit are not selected for new sessions.
 
 ### Using Docker Run
 
@@ -199,6 +223,7 @@ The admin panel allows you to:
 | `RATE_LIMIT_WAIT` | `false` | Wait instead of error when rate limit is hit |
 | `SHOW_TOKEN` | `false` | Display tokens in logs |
 | `PROXY_ENV` | `false` | Use `HTTP_PROXY`/`HTTPS_PROXY` from environment |
+| `COPILOT_API_CLIENT_KEYS` | - | Comma-separated `client-namespace=api-key` mappings for proxy clients, for example separate DSH and sub2api keys |
 
 ### Docker Compose Example with Options
 

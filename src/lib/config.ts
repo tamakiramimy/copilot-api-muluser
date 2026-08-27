@@ -10,6 +10,8 @@ export interface AccountConfig {
   token: string
   accountType: "individual" | "business" | "enterprise"
   createdAt: string
+  enabled?: boolean
+  maxConcurrentRequests?: number
 }
 
 export interface AppConfig {

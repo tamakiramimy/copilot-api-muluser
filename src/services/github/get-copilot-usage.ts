@@ -1,10 +1,14 @@
+import type { AccountRuntime } from "~/lib/account-runtime"
+
 import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
-export const getCopilotUsage = async (): Promise<CopilotUsageResponse> => {
+export const getCopilotUsage = async (
+  runtime?: AccountRuntime,
+): Promise<CopilotUsageResponse> => {
   const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {
-    headers: githubHeaders(state),
+    headers: githubHeaders(runtime ?? state),
   })
 
   if (!response.ok) {

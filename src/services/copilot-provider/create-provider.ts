@@ -2,6 +2,7 @@ import type { FetchFunction } from "@ai-sdk/provider-utils"
 
 import consola from "consola"
 
+import type { AccountRuntime } from "~/lib/account-runtime"
 import type { SubagentMarker } from "~/routes/messages/subagent-marker"
 
 import {
@@ -11,6 +12,7 @@ import {
 } from "~/lib/api-config"
 import { ContextOverflowError, isContextOverflow } from "~/lib/copilot-error"
 import { copilotTokenManager } from "~/lib/copilot-token-manager"
+import { getAccountCopilotTokenManager } from "~/lib/copilot-token-manager"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
@@ -19,24 +21,29 @@ import { state } from "~/lib/state"
  * When the initial request fails with 401/403, it clears the token,
  * gets a fresh one, and retries with the updated Authorization header.
  */
-function createCopilotFetch(): FetchFunction {
+function createCopilotFetch(runtime?: AccountRuntime): FetchFunction {
   const RETRYABLE_STATUSES = new Set([401, 403])
 
   const copilotFetch = async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
   ) => {
-    await copilotTokenManager.getToken()
+    const tokenManager =
+      runtime ? getAccountCopilotTokenManager(runtime) : copilotTokenManager
+    await tokenManager.getToken()
 
     const response = await globalThis.fetch(input, init)
 
     if (RETRYABLE_STATUSES.has(response.status)) {
-      copilotTokenManager.clear()
-      await copilotTokenManager.getToken()
+      tokenManager.clear()
+      await tokenManager.getToken()
 
       // Replace Authorization header with new token
       const currentHeaders = new Headers(init?.headers)
-      currentHeaders.set("Authorization", `Bearer ${state.copilotToken}`)
+      currentHeaders.set(
+        "Authorization",
+        `Bearer ${runtime?.copilotToken ?? state.copilotToken}`,
+      )
       return globalThis.fetch(input, {
         ...init,
         headers: Object.fromEntries(currentHeaders.entries()),
@@ -83,9 +90,10 @@ export interface CopilotRequestOptions {
  */
 export async function copilotRequest(
   options: CopilotRequestOptions,
+  runtime?: AccountRuntime,
 ): Promise<Response> {
   const headers: Record<string, string> = {
-    ...copilotHeaders(state, options.vision),
+    ...copilotHeaders(runtime ?? state, options.vision),
   }
 
   if (options.initiator) {
@@ -102,8 +110,8 @@ export async function copilotRequest(
     Object.assign(headers, options.extraHeaders)
   }
 
-  const copilotFetch = createCopilotFetch()
-  const url = `${copilotBaseUrl(state)}${options.path}`
+  const copilotFetch = createCopilotFetch(runtime)
+  const url = `${copilotBaseUrl(runtime ?? state)}${options.path}`
   const method = options.method ?? "POST"
 
   const response = await copilotFetch(url, {

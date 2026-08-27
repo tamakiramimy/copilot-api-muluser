@@ -107,6 +107,36 @@ export async function setActiveAccount(
   return account
 }
 
+export async function setAccountEnabled(
+  accountId: string,
+  enabled: boolean,
+): Promise<Account | null> {
+  const data = await getAccounts()
+  const account = data.accounts.find((candidate) => candidate.id === accountId)
+  if (!account) {
+    return null
+  }
+
+  account.enabled = enabled
+  await saveAccounts(data)
+  return account
+}
+
+export async function setAccountType(
+  accountId: string,
+  accountType: Account["accountType"],
+): Promise<Account | null> {
+  const data = await getAccounts()
+  const account = data.accounts.find((candidate) => candidate.id === accountId)
+  if (!account) {
+    return null
+  }
+
+  account.accountType = accountType
+  await saveAccounts(data)
+  return account
+}
+
 /**
  * Get the currently active account
  */

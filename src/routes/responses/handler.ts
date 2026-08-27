@@ -2,9 +2,10 @@ import type { Context } from "hono"
 
 import { streamSSE } from "hono/streaming"
 
+import { acquireAccountRequestScope } from "~/lib/account-request"
 import { getConfig, getMappedModel } from "~/lib/config"
 import { createHandlerLogger } from "~/lib/logger"
-import { checkRateLimit } from "~/lib/rate-limit"
+import { checkAccountRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import {
   createResponses,
@@ -39,67 +40,98 @@ interface CustomTool extends Record<string, unknown> {
 }
 
 export const handleResponses = async (c: Context) => {
-  await checkRateLimit(state)
-
   const payload = await c.req.json<ResponsesPayload>()
   logger.debug("Responses request payload:", JSON.stringify(payload))
 
   payload.model = getMappedModel(payload.model)
 
-  normalizeCustomTools(payload)
-  filterUnsupportedTools(payload)
+  const scope = acquireAccountRequestScope(c, {
+    protocol: "responses",
+    payload,
+    requirement: {
+      model: payload.model,
+      endpoint: RESPONSES_ENDPOINT,
+    },
+  })
+  const { lease, sessionId } = scope
+  const runtime = lease.runtime
 
-  const selectedModel = state.models?.data.find(
-    (model) => model.id === payload.model,
-  )
-  const supportsResponses =
-    selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false
-
-  if (!supportsResponses) {
-    return c.json(
-      {
-        error: {
-          message:
-            "This model does not support the responses endpoint. Please choose a different model.",
-          type: "invalid_request_error",
-        },
-      },
-      400,
+  try {
+    await checkAccountRateLimit(
+      runtime,
+      state.rateLimitSeconds,
+      state.rateLimitWait,
     )
-  }
 
-  const { vision, initiator } = getResponsesRequestOptions(payload)
+    normalizeCustomTools(payload)
+    filterUnsupportedTools(payload)
 
-  const response = await createResponses(payload, { vision, initiator })
+    const selectedModel = runtime.models?.data.find(
+      (model) => model.id === payload.model,
+    )
+    const supportsResponses =
+      selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false
 
-  if (isStreamingRequested(payload) && isAsyncIterable(response)) {
-    logger.debug("Forwarding native Responses stream")
-    return streamSSE(c, async (stream) => {
-      const idTracker = createStreamIdTracker()
+    if (!supportsResponses) {
+      lease.release()
+      return c.json(
+        {
+          error: {
+            message:
+              "This model does not support the responses endpoint. Please choose a different model.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      )
+    }
 
-      for await (const chunk of response) {
-        logger.debug("Responses stream chunk:", JSON.stringify(chunk))
+    const { vision, initiator } = getResponsesRequestOptions(payload)
 
-        const processedData = fixStreamIds(
-          (chunk as { data?: string }).data ?? "",
-          (chunk as { event?: string }).event,
-          idTracker,
-        )
-
-        await stream.writeSSE({
-          id: (chunk as { id?: string }).id,
-          event: (chunk as { event?: string }).event,
-          data: processedData,
-        })
-      }
+    const response = await createResponses(payload, {
+      vision,
+      initiator,
+      runtime,
+      sessionId,
     })
-  }
 
-  logger.debug(
-    "Forwarding native Responses result:",
-    JSON.stringify(response).slice(-400),
-  )
-  return c.json(response as ResponsesResult)
+    if (isStreamingRequested(payload) && isAsyncIterable(response)) {
+      logger.debug("Forwarding native Responses stream")
+      return streamSSE(c, async (stream) => {
+        try {
+          const idTracker = createStreamIdTracker()
+
+          for await (const chunk of response) {
+            logger.debug("Responses stream chunk:", JSON.stringify(chunk))
+
+            const processedData = fixStreamIds(
+              (chunk as { data?: string }).data ?? "",
+              (chunk as { event?: string }).event,
+              idTracker,
+            )
+
+            await stream.writeSSE({
+              id: (chunk as { id?: string }).id,
+              event: (chunk as { event?: string }).event,
+              data: processedData,
+            })
+          }
+        } finally {
+          lease.release()
+        }
+      })
+    }
+
+    logger.debug(
+      "Forwarding native Responses result:",
+      JSON.stringify(response).slice(-400),
+    )
+    lease.release()
+    return c.json(response as ResponsesResult)
+  } catch (error) {
+    lease.release()
+    throw error
+  }
 }
 
 const isAsyncIterable = <T>(value: unknown): value is AsyncIterable<T> =>

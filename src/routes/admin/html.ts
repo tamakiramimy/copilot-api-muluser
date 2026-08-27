@@ -104,6 +104,11 @@ export const adminHtml = `<!DOCTYPE html>
     .model-id { font-size: 0.75rem; color: #8b949e; font-family: monospace; }
     .model-badge { display: inline-block; font-size: 0.625rem; padding: 0.125rem 0.375rem; border-radius: 9999px; background: #21262d; color: #8b949e; margin-top: 0.5rem; }
     .model-badge.premium { background: #9333ea; color: #fff; }
+    .model-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
+    .model-test-result { margin-top: 0.5rem; color: #8b949e; font-size: 0.75rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+    .model-test-result.success { color: #3fb950; }
+    .model-test-result.error { color: #f85149; }
+    .account-type-select { width: auto; margin: 0; padding: 0.25rem 0.5rem; font-size: 0.75rem; }
     .usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
     .usage-card { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; }
     .usage-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
@@ -447,6 +452,11 @@ export const adminHtml = `<!DOCTYPE html>
         '<div class="account-info"><div class="account-name">' + escHtml(acc.login) + '</div><div class="account-type">' + escHtml(acc.accountType) + '</div></div>' +
         (acc.isActive ? '<span class="account-badge">Active</span>' : '') +
         '<div class="account-actions">' +
+        '<select class="select account-type-select" data-account-type-id="' + escHtml(acc.id) + '" aria-label="Account type for ' + escHtml(acc.login) + '">' +
+          '<option value="individual"' + (acc.accountType === 'individual' ? ' selected' : '') + '>Individual</option>' +
+          '<option value="business"' + (acc.accountType === 'business' ? ' selected' : '') + '>Business</option>' +
+          '<option value="enterprise"' + (acc.accountType === 'enterprise' ? ' selected' : '') + '>Enterprise</option>' +
+        '</select>' +
         (!acc.isActive ? '<button class="btn btn-sm" data-action="switch" data-id="' + escHtml(acc.id) + '">Switch</button>' : '') +
         '<button class="btn btn-sm btn-danger" data-action="delete-account" data-id="' + escHtml(acc.id) + '" data-login="' + escHtml(acc.login) + '">Delete</button>' +
         '</div></li>').join('');
@@ -455,9 +465,31 @@ export const adminHtml = `<!DOCTYPE html>
       if (!confirm('Switch to this account?')) return;
       try {
         const res = await fetch(API_BASE + '/accounts/' + id + '/activate', { method: 'POST' });
-        if (res.ok) { fetchAccounts(); fetchStatus(); }
+        if (res.ok) {
+          await fetchAccounts();
+          await fetchStatus();
+          await fetchUsage();
+        }
         else { const data = await res.json(); alert(data.error?.message || 'Failed to switch account'); }
       } catch (e) { alert('Failed to switch account'); }
+    }
+    async function updateAccountType(id, accountType) {
+      try {
+        const res = await fetch(API_BASE + '/accounts/' + encodeURIComponent(id) + '/type', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountType })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error?.message || 'Failed to update account type');
+        }
+        await fetchAccounts();
+        await fetchStatus();
+      } catch (e) {
+        alert('Failed to update account type');
+        await fetchAccounts();
+      }
     }
     async function deleteAccount(id, login) {
       if (!confirm('Delete account "' + login + '"? This cannot be undone.')) return;
@@ -492,9 +524,40 @@ export const adminHtml = `<!DOCTYPE html>
       }
       container.innerHTML = data.data.map(model => {
         const isPremium = model.id.includes('o1') || model.id.includes('o3') || model.id.includes('claude');
+        const endpoints = (model.supported_endpoints || []).join(', ');
         return '<div class="model-card"><div class="model-name">' + escHtml(model.id) + '</div><div class="model-id">' + escHtml(model.object || 'model') + '</div>' +
-          (isPremium ? '<span class="model-badge premium">Premium</span>' : '') + '</div>';
+          (endpoints ? '<div class="model-id">' + escHtml(endpoints) + '</div>' : '') +
+          (isPremium ? '<span class="model-badge premium">Premium</span>' : '') +
+          '<div class="model-actions"><button class="btn btn-sm" data-action="test-model" data-id="' + escHtml(model.id) + '" title="请回复一个' + escHtml(model.id) + '">Test</button></div>' +
+          '<div class="model-test-result" aria-live="polite"></div></div>';
       }).join('');
+    }
+    async function testModel(id, button) {
+      const card = button.closest('.model-card');
+      const result = card?.querySelector('.model-test-result');
+      button.disabled = true;
+      button.textContent = 'Testing...';
+      if (result) {
+        result.className = 'model-test-result';
+        result.textContent = 'Prompt: 请回复一个' + id;
+      }
+      try {
+        const res = await fetch(API_BASE + '/models/' + encodeURIComponent(id) + '/test', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error?.message || 'Test request failed');
+        if (result) {
+          result.className = 'model-test-result success';
+          result.textContent = 'OK (' + data.endpoint + '): ' + (data.output || '(empty response)');
+        }
+      } catch (e) {
+        if (result) {
+          result.className = 'model-test-result error';
+          result.textContent = 'Failed: ' + (e.message || 'Test request failed');
+        }
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Test';
+      }
     }
     async function fetchUsage() {
       const btn = document.getElementById('refreshUsage');
@@ -613,7 +676,14 @@ export const adminHtml = `<!DOCTYPE html>
         deleteAccount(id, login || '');
       } else if (action === 'delete-mapping' && from) {
         deleteMapping(from);
+      } else if (action === 'test-model' && id) {
+        testModel(id, actionEl);
       }
+    });
+    document.addEventListener('change', (e) => {
+      if (!(e.target instanceof HTMLSelectElement)) return;
+      const id = e.target.dataset.accountTypeId;
+      if (id) updateAccountType(id, e.target.value);
     });
 
     fetchAccounts();

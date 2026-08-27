@@ -1,5 +1,6 @@
 import { events } from "fetch-event-stream"
 
+import type { AccountRuntime } from "~/lib/account-runtime"
 import type { SubagentMarker } from "~/routes/messages/subagent-marker"
 
 import { copilotRequest } from "~/services/copilot-provider/create-provider"
@@ -8,6 +9,7 @@ interface ChatCompletionsOptions {
   initiator?: "agent" | "user"
   subagentMarker?: SubagentMarker | null
   sessionId?: string
+  runtime?: AccountRuntime
 }
 
 export const createChatCompletions = async (
@@ -25,14 +27,17 @@ export const createChatCompletions = async (
     lastMessage !== undefined
     && (lastMessage.role === "assistant" || lastMessage.role === "tool")
 
-  const response = await copilotRequest({
-    path: "/chat/completions",
-    body: payload,
-    vision: enableVision,
-    initiator: options.initiator ?? (isAgentCall ? "agent" : "user"),
-    subagentMarker: options.subagentMarker,
-    sessionId: options.sessionId,
-  })
+  const response = await copilotRequest(
+    {
+      path: "/chat/completions",
+      body: payload,
+      vision: enableVision,
+      initiator: options.initiator ?? (isAgentCall ? "agent" : "user"),
+      subagentMarker: options.subagentMarker,
+      sessionId: options.sessionId,
+    },
+    options.runtime,
+  )
 
   if (payload.stream) {
     return events(response)

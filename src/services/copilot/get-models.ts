@@ -1,10 +1,15 @@
+import type { AccountRuntime } from "~/lib/account-runtime"
+
 import { copilotRequest } from "~/services/copilot-provider/create-provider"
 
-export const getModels = async () => {
-  const response = await copilotRequest({
-    path: "/models",
-    method: "GET",
-  })
+export const getModels = async (runtime?: AccountRuntime) => {
+  const response = await copilotRequest(
+    {
+      path: "/models",
+      method: "GET",
+    },
+    runtime,
+  )
 
   return (await response.json()) as ModelsResponse
 }

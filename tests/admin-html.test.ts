@@ -21,6 +21,7 @@ describe("adminHtml hardening", () => {
     expect(adminHtml).toContain('data-action="switch"')
     expect(adminHtml).toContain('data-action="delete-account"')
     expect(adminHtml).toContain('data-action="delete-mapping"')
+    expect(adminHtml).toContain('data-action="test-model"')
     expect(adminHtml).not.toContain('onclick="switchAccount')
     expect(adminHtml).not.toContain('onclick="deleteAccount')
     expect(adminHtml).not.toContain('onclick="deleteMapping')
@@ -39,5 +40,15 @@ describe("adminHtml hardening", () => {
     expect(adminHtml).toContain(
       "Target model (add account to load suggestions)",
     )
+  })
+
+  test("provides per-model testing with the requested default prompt", () => {
+    expect(adminHtml).toContain("请回复一个' + id")
+    expect(adminHtml).toContain("/models/' + encodeURIComponent(id) + '/test")
+    expect(adminHtml).toContain("data-account-type-id")
+  })
+
+  test("refreshes usage after switching the active account", () => {
+    expect(adminHtml).toContain("await fetchUsage()")
   })
 })

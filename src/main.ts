@@ -3,9 +3,10 @@
 import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 
-import { getActiveAccount } from "./lib/accounts"
+import { accountRuntimeRegistry } from "./lib/account-runtime"
+import { getAccounts } from "./lib/accounts"
 import { mergeConfigWithDefaults } from "./lib/config"
-import { copilotTokenManager } from "./lib/copilot-token-manager"
+import { getAccountCopilotTokenManager } from "./lib/copilot-token-manager"
 import {
   getLocalAccessPassword,
   getLocalAccessUsername,
@@ -52,25 +53,21 @@ async function main(): Promise<void> {
   await ensurePaths()
   await cacheVSCodeVersion()
 
-  // Try to load active account from config
-  const activeAccount = await getActiveAccount()
-
-  if (activeAccount) {
-    state.githubToken = activeAccount.token
-    state.accountType = activeAccount.accountType
-    consola.info(`Logged in as ${activeAccount.login}`)
-
-    if (state.showToken) {
-      consola.info("GitHub token:", activeAccount.token)
+  const accounts = await getAccounts()
+  accountRuntimeRegistry.initialize(accounts.accounts)
+  for (const runtime of accountRuntimeRegistry.getAll()) {
+    try {
+      await getAccountCopilotTokenManager(runtime).getToken()
+      await cacheModels(runtime)
+      consola.info(
+        `Loaded ${runtime.models?.data.length ?? 0} models for ${runtime.account.login}`,
+      )
+    } catch (error) {
+      consola.warn(`Failed to initialize ${runtime.account.login}:`, error)
     }
+  }
 
-    await copilotTokenManager.getToken()
-    await cacheModels()
-
-    consola.info(
-      `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
-    )
-  } else {
+  if (accounts.accounts.length === 0) {
     consola.warn("No account configured. Visit /admin to add an account.")
   }
 

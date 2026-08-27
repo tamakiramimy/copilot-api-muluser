@@ -1,5 +1,6 @@
 import { events } from "fetch-event-stream"
 
+import type { AccountRuntime } from "~/lib/account-runtime"
 import type {
   AnthropicMessagesPayload,
   AnthropicResponse,
@@ -33,6 +34,7 @@ interface SubagentInfo {
 interface CreateMessagesOptions extends SubagentInfo {
   anthropicBetaHeader?: string
   initiatorOverride?: "agent" | "user"
+  runtime?: AccountRuntime
 }
 
 function buildBetaHeaders(
@@ -77,15 +79,18 @@ export const createMessages = async (
 
   sanitizeAnthropicPayload(payload)
 
-  const response = await copilotRequest({
-    path: "/v1/messages",
-    body: payload,
-    vision: enableVision,
-    initiator: options.initiatorOverride ?? inferredInitiator(),
-    subagentMarker: options.subagentMarker,
-    sessionId: options.sessionId,
-    extraHeaders: buildBetaHeaders(options.anthropicBetaHeader, payload),
-  })
+  const response = await copilotRequest(
+    {
+      path: "/v1/messages",
+      body: payload,
+      vision: enableVision,
+      initiator: options.initiatorOverride ?? inferredInitiator(),
+      subagentMarker: options.subagentMarker,
+      sessionId: options.sessionId,
+      extraHeaders: buildBetaHeaders(options.anthropicBetaHeader, payload),
+    },
+    options.runtime,
+  )
 
   if (payload.stream) {
     return events(response)

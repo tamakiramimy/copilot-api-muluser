@@ -1,10 +1,18 @@
+import type { AccountRuntime } from "~/lib/account-runtime"
+
 import { copilotRequest } from "~/services/copilot-provider/create-provider"
 
-export const createEmbeddings = async (payload: EmbeddingRequest) => {
-  const response = await copilotRequest({
-    path: "/embeddings",
-    body: payload,
-  })
+export const createEmbeddings = async (
+  payload: EmbeddingRequest,
+  runtime?: AccountRuntime,
+) => {
+  const response = await copilotRequest(
+    {
+      path: "/embeddings",
+      body: payload,
+    },
+    runtime,
+  )
 
   return (await response.json()) as EmbeddingResponse
 }

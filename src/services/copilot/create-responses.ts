@@ -1,5 +1,6 @@
 import { events } from "fetch-event-stream"
 
+import type { AccountRuntime } from "~/lib/account-runtime"
 import type { SubagentMarker } from "~/routes/messages/subagent-marker"
 
 import { copilotRequest } from "~/services/copilot-provider/create-provider"
@@ -325,23 +326,33 @@ interface ResponsesRequestOptions {
   initiator: "agent" | "user"
   subagentMarker?: SubagentMarker | null
   sessionId?: string
+  runtime?: AccountRuntime
 }
 
 export const createResponses = async (
   payload: ResponsesPayload,
-  { vision, initiator, subagentMarker, sessionId }: ResponsesRequestOptions,
-): Promise<CreateResponsesReturn> => {
-  // service_tier is not supported by github copilot
-  payload.service_tier = null
-
-  const response = await copilotRequest({
-    path: "/responses",
-    body: payload,
+  {
     vision,
     initiator,
     subagentMarker,
     sessionId,
-  })
+    runtime,
+  }: ResponsesRequestOptions,
+): Promise<CreateResponsesReturn> => {
+  // service_tier is not supported by github copilot
+  payload.service_tier = null
+
+  const response = await copilotRequest(
+    {
+      path: "/responses",
+      body: payload,
+      vision,
+      initiator,
+      subagentMarker,
+      sessionId,
+    },
+    runtime,
+  )
 
   if (payload.stream) {
     return events(response)

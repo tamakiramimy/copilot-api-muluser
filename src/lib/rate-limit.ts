@@ -1,5 +1,6 @@
 import consola from "consola"
 
+import type { AccountRuntime } from "./account-runtime"
 import type { State } from "./state"
 
 import { HTTPError } from "./error"
@@ -43,4 +44,37 @@ export async function checkRateLimit(state: State) {
   state.lastRequestTimestamp = now
   consola.info("Rate limit wait completed, proceeding with request")
   return
+}
+
+export async function checkAccountRateLimit(
+  runtime: AccountRuntime,
+  rateLimitSeconds: number | undefined,
+  rateLimitWait: boolean,
+): Promise<void> {
+  if (rateLimitSeconds === undefined) return
+
+  const now = Date.now()
+  if (!runtime.lastRequestTimestamp) {
+    runtime.lastRequestTimestamp = now
+    return
+  }
+
+  const elapsedSeconds = (now - runtime.lastRequestTimestamp) / 1000
+  if (elapsedSeconds > rateLimitSeconds) {
+    runtime.lastRequestTimestamp = now
+    return
+  }
+
+  const waitTimeSeconds = Math.ceil(rateLimitSeconds - elapsedSeconds)
+  if (!rateLimitWait) {
+    throw new HTTPError(
+      "Rate limit exceeded",
+      Response.json({ message: "Rate limit exceeded" }, { status: 429 }),
+    )
+  }
+
+  await sleep(waitTimeSeconds * 1000)
+  // Each runtime has an active request lease, so this write cannot race locally.
+  // eslint-disable-next-line require-atomic-updates
+  runtime.lastRequestTimestamp = Date.now()
 }
