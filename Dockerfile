@@ -1,4 +1,6 @@
-FROM oven/bun:1.2.19-alpine AS builder
+ARG BUN_VERSION=1.3.14
+
+FROM --platform=$BUILDPLATFORM oven/bun:${BUN_VERSION}-alpine AS builder
 WORKDIR /app
 
 COPY ./package.json ./bun.lock ./
@@ -6,16 +8,16 @@ RUN bun install --frozen-lockfile
 
 COPY . .
 RUN bun run build
+RUN bun install --frozen-lockfile --production --ignore-scripts --no-cache
 
-FROM oven/bun:1.2.19-alpine AS runner
+FROM --platform=$TARGETPLATFORM oven/bun:${BUN_VERSION}-alpine AS runner
 WORKDIR /app
 
 # Create non-root user for security
 RUN addgroup -S copilot && adduser -S copilot -G copilot
 
-COPY ./package.json ./bun.lock ./
-RUN bun install --frozen-lockfile --production --ignore-scripts --no-cache
-
+COPY --from=builder /app/package.json /app/bun.lock ./
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 # Create data directory for config persistence
