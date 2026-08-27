@@ -1,4 +1,4 @@
-# Copilot API Proxy
+# Copilot API Muluser
 
 **[English](README.md) | 中文**
 
@@ -32,7 +32,7 @@
 
 ## 项目概述
 
-一个 GitHub Copilot API 的逆向代理，将其暴露为 OpenAI 和 Anthropic 兼容的服务。这使您可以将 GitHub Copilot 与任何支持 OpenAI Chat Completions API 或 Anthropic Messages API 的工具一起使用，包括 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)。
+一个 GitHub Copilot API 的逆向代理，将其暴露为 OpenAI 和 Anthropic 兼容的服务。它支持 DeepSeek Harness Electron、sub2api 等客户端的独立多账户自动调度，客户端无需传递终端用户或 GitHub 账户标识。
 
 ## 架构
 
@@ -127,7 +127,10 @@ sequenceDiagram
 
 - **OpenAI & Anthropic 兼容**：将 GitHub Copilot 暴露为 OpenAI 兼容（`/v1/chat/completions`、`/v1/models`、`/v1/embeddings`、`/v1/responses`）和 Anthropic 兼容（`/v1/messages`）的 API。
 - **Web 账户管理**：通过 `/admin` 的简单 Web 界面添加和管理多个 GitHub 账户。
-- **多账户支持**：无需重启服务器即可在不同 GitHub 账户之间切换。
+- **多账户自动调度**：新会话从所有已启用且健康的账户中按最小活动负载自动分配；同一会话会在 30 分钟内保持账户亲和，保证多轮上下文不跨账户。
+- **账户状态独立**：每个 GitHub 账户拥有独立的 GitHub/Copilot Token、模型目录、限流状态、冷却状态和并发租约；一个账户异常不会覆盖其他账户的凭据。
+- **客户端命名空间隔离**：DeepSeek Harness Electron 和 sub2api 可使用不同的服务端 Bearer Key。客户端不能选择账户，也不传递用户身份；Key 仅用于隔离各自的不透明会话命名空间。
+- **逐模型测试**：Models 页面可按模型声明的原生端点测试每个可用模型，默认提示词为 `请回复一个${模型名称}`，并在页面展示响应。
 - **Docker 优先部署**：针对容器化部署进行优化，支持持久化数据存储。
 - **使用量监控**：通过 `/usage` 端点查看 Copilot API 使用量和配额信息。
 - **速率限制控制**：通过速率限制选项管理 API 使用，防止快速请求导致的错误。
@@ -157,15 +160,17 @@ docker compose logs -f
 ```bash
 export LOCAL_ACCESS_PASSWORD="$(openssl rand -base64 24)"
 
+docker pull tamakiramimy/copilot-api-muluser:latest
+
 docker run -d \
-  --name copilot-api \
+  --name copilot-api-muluser \
   -p 127.0.0.1:4141:4141 \
   -e HOST=0.0.0.0 \
   -e LOCAL_ACCESS_MODE=container-bridge \
   -e LOCAL_ACCESS_PASSWORD="${LOCAL_ACCESS_PASSWORD}" \
   -v copilot-data:/data \
   --restart unless-stopped \
-  ghcr.io/yuegongzi/copilot-api:latest
+  tamakiramimy/copilot-api-muluser:latest
 ```
 
 `LOCAL_ACCESS_MODE=container-bridge` 是专门为“只发布到 localhost 的 Docker 用法”准备的显式开关。不要把它和 `-p 4141:4141` 或任何非 localhost 的端口发布方式一起使用。启用后，`/admin` 和 `/token` 还会额外要求 HTTP Basic Auth，用户名固定为 `copilot`，密码来自 `LOCAL_ACCESS_PASSWORD`。
@@ -181,10 +186,14 @@ docker run -d \
 管理面板允许您：
 
 - 添加多个 GitHub 账户
-- 在账户之间切换
+- 切换管理页面的活动账户，以查看该账户的 Models、Usage 和手动模型测试
 - 删除账户
 - 查看账户状态（个人/商业/企业）
+- 修正账户类型并刷新该账户的 Copilot 模型目录
+- 对每个可用模型执行 `请回复一个${模型名称}` 测试；代理会从模型声明的 `/responses`、`/v1/messages` 或 `/chat/completions` 中选择端点
 - 在 `Settings` 页面配置全局限流
+
+`activeAccountId` 仅是管理页面偏好。代理客户端的 API 请求会根据客户端命名空间、协议会话、模型支持、账户健康状态和活动负载，在所有已启用账户间自动调度。
 
 ## 环境变量
 
@@ -199,14 +208,15 @@ docker run -d \
 | `RATE_LIMIT_WAIT` | `false` | 达到速率限制时等待而不是返回错误 |
 | `SHOW_TOKEN` | `false` | 在日志中显示令牌 |
 | `PROXY_ENV` | `false` | 从环境变量使用 `HTTP_PROXY`/`HTTPS_PROXY` |
+| `COPILOT_API_CLIENT_KEYS` | - | 代理客户端的 `client-namespace=api-key` 映射，可为 DSH 和 sub2api 使用不同 Key |
 
 ### 带选项的 Docker Compose 示例
 
 ```yaml
 services:
-  copilot-api:
-    image: ghcr.io/yuegongzi/copilot-api:latest
-    container_name: copilot-api
+  copilot-api-muluser:
+    image: tamakiramimy/copilot-api-muluser:latest
+    container_name: copilot-api-muluser
     ports:
       - "127.0.0.1:4141:4141"
     volumes:
@@ -296,7 +306,7 @@ volumes:
 如果您希望 Claude Code 在 `SubagentStart` hook 中注入一个额外 marker，帮助 `copilot-api` 更稳定地区分 initiator override，可以直接从本仓库安装可选插件：
 
 ```bash
-/plugin marketplace add https://github.com/yuegongzi/copilot-api.git
+/plugin marketplace add https://github.com/tamakiramimy/copilot-api-muluser.git
 /plugin install copilot-api-subagent-marker@copilot-api-marketplace
 ```
 
@@ -334,7 +344,7 @@ volumes:
 | 键 | 描述 |
 |----|------|
 | `accounts` | 已配置的 GitHub 账户列表 |
-| `activeAccountId` | 当前活跃账户 ID |
+| `activeAccountId` | Models、Usage 和手动测试的管理页面默认账户；不会强制代理客户端使用该账户 |
 | `extraPrompts` | 附加到系统消息的每模型提示 |
 | `smallModel` | 预热请求的备用模型（默认：`gpt-5-mini`） |
 | `modelReasoningEfforts` | 每模型推理强度（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`） |
@@ -378,7 +388,11 @@ bun run knip
 
 - **速率限制**：使用 `RATE_LIMIT` 防止触发 GitHub 的速率限制。设置 `RATE_LIMIT_WAIT=true` 可以队列请求而不是返回错误。
 - **商业/企业账户**：账户类型在 OAuth 流程中自动检测。
-- **多账户**：通过 `/admin` 添加多个账户，并根据需要在它们之间切换。
+- **多账户**：通过 `/admin` 添加多个账户；代理客户端的新会话会自动分配到符合条件的账户。活动账户切换仅用于查看指定账户的 Models、Usage 和模型测试结果。
+
+## Docker 镜像
+
+发布镜像位于 [Docker Hub](https://hub.docker.com/r/tamakiramimy/copilot-api-muluser)。每个时间戳发布使用不可变 UTC 标签 `vYYYYmmddHHmmss`，`latest` 始终指向最近一次成功发布。镜像支持 `linux/amd64` 与 `linux/arm64`。
 
 ## Premium Interaction 说明
 

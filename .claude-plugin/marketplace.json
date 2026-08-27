@@ -17,8 +17,8 @@
         "name": "yuegongzi",
         "url": "https://github.com/yuegongzi"
       },
-      "homepage": "https://github.com/yuegongzi/copilot-api#optional-claude-code-plugin",
-      "repository": "https://github.com/yuegongzi/copilot-api",
+      "homepage": "https://github.com/tamakiramimy/copilot-api-muluser#optional-claude-code-plugin",
+      "repository": "https://github.com/tamakiramimy/copilot-api-muluser",
       "license": "MIT",
       "keywords": ["claude-code", "copilot-api", "subagent", "hooks"],
       "category": "Developer Tools"

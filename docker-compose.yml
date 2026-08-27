@@ -1,4 +1,4 @@
-# Docker Compose configuration for copilot-api
+# Docker Compose configuration for copilot-api-muluser
 # 
 # Quick start:
 #   docker compose up -d
@@ -6,9 +6,9 @@
 # Then visit http://localhost:4141/admin to add your GitHub account
 
 services:
-  copilot-api:
-    image: ${IMAGE:-ghcr.io/yuegongzi/copilot-api:latest}
-    container_name: ${CONTAINER_NAME:-copilot-api}
+  copilot-api-muluser:
+    image: ${IMAGE:-tamakiramimy/copilot-api-muluser:latest}
+    container_name: ${CONTAINER_NAME:-copilot-api-muluser}
     ports:
       # Publish to localhost only so admin and token stay off the LAN.
       - "127.0.0.1:${HOST_PORT:-4141}:${PORT:-4141}"

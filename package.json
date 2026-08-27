@@ -1,5 +1,5 @@
 {
-  "name": "copilot-api",
+  "name": "copilot-api-muluser",
   "version": "0.7.0",
   "description": "Turn GitHub Copilot into OpenAI/Anthropic API compatible server. Usable with Claude Code!",
   "keywords": [
@@ -7,11 +7,11 @@
     "github-copilot",
     "openai-compatible"
   ],
-  "homepage": "https://github.com/yuegongzi/copilot-api",
-  "bugs": "https://github.com/yuegongzi/copilot-api/issues",
+  "homepage": "https://github.com/tamakiramimy/copilot-api-muluser",
+  "bugs": "https://github.com/tamakiramimy/copilot-api-muluser/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yuegongzi/copilot-api.git"
+    "url": "git+https://github.com/tamakiramimy/copilot-api-muluser.git"
   },
   "author": "yuegongzi",
   "type": "module",

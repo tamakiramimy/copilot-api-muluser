@@ -1,4 +1,4 @@
-# Copilot API Proxy
+# Copilot API Muluser
 
 **English | [中文](README.zh-CN.md)**
 
@@ -32,7 +32,7 @@
 
 ## Project Overview
 
-A reverse-engineered proxy for the GitHub Copilot API that exposes it as an OpenAI and Anthropic compatible service. This allows you to use GitHub Copilot with any tool that supports the OpenAI Chat Completions API or the Anthropic Messages API, including [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview).
+A reverse-engineered proxy for the GitHub Copilot API that exposes it as an OpenAI and Anthropic compatible service. It supports independent multi-account request scheduling for tools such as DeepSeek Harness Electron and sub2api, without sending an end-user or GitHub account identifier from the client.
 
 ## Architecture
 
@@ -127,7 +127,10 @@ sequenceDiagram
 
 - **OpenAI & Anthropic Compatibility**: Exposes GitHub Copilot as an OpenAI-compatible (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, `/v1/responses`) and Anthropic-compatible (`/v1/messages`) API.
 - **Web-based Account Management**: Add and manage multiple GitHub accounts through a simple web interface at `/admin`.
-- **Multi-Account Scheduling**: New sessions are distributed across healthy accounts, while subsequent requests in the same session remain on the assigned account.
+- **Automatic Multi-Account Scheduling**: New sessions are assigned from all enabled, healthy accounts by least active load. A session remains bound to its selected account for 30 minutes, so multi-turn context never crosses accounts.
+- **Independent Account State**: Every GitHub account has its own GitHub/Copilot tokens, model catalog, rate-limit state, cooldown, and concurrent-request lease. One account's failure or capacity limit does not overwrite another account's credentials.
+- **Client Namespace Isolation**: DeepSeek Harness Electron and sub2api can use separate server-configured Bearer keys. Clients never choose an account or send user identity data; the key only separates their opaque session namespaces.
+- **Per-Model Test**: The Models view can test each listed model against its supported native endpoint. The default prompt is `请回复一个${模型名称}` and the response is rendered in the dashboard.
 - **Docker-First Deployment**: Optimized for containerized deployment with persistent data storage.
 - **Usage Monitoring**: View your Copilot API usage and quota information via `/usage` endpoint.
 - **Rate Limit Control**: Manage API usage with rate-limiting options to prevent errors from rapid requests.
@@ -181,15 +184,17 @@ Use a separate key in DeepSeek Harness Electron and sub2api. DSH should use the 
 ```bash
 export LOCAL_ACCESS_PASSWORD="$(openssl rand -base64 24)"
 
+docker pull tamakiramimy/copilot-api-muluser:latest
+
 docker run -d \
-  --name copilot-api \
+  --name copilot-api-muluser \
   -p 127.0.0.1:4141:4141 \
   -e HOST=0.0.0.0 \
   -e LOCAL_ACCESS_MODE=container-bridge \
   -e LOCAL_ACCESS_PASSWORD="${LOCAL_ACCESS_PASSWORD}" \
   -v copilot-data:/data \
   --restart unless-stopped \
-  ghcr.io/yuegongzi/copilot-api:latest
+  tamakiramimy/copilot-api-muluser:latest
 ```
 
 `LOCAL_ACCESS_MODE=container-bridge` is an explicit opt-in for this localhost-published Docker pattern. Do not combine it with `-p 4141:4141` or any other non-localhost publish target. When enabled, `/admin` and `/token` also require HTTP Basic auth with username `copilot` and the password from `LOCAL_ACCESS_PASSWORD`.
@@ -205,10 +210,14 @@ docker run -d \
 The admin panel allows you to:
 
 - Add multiple GitHub accounts
-- Switch between accounts
+- Switch the active account for administrative Models, Usage, and manual model tests
 - Remove accounts
 - View account status (individual/business/enterprise)
+- Correct an account type and refresh its Copilot model catalog
+- Test each available model with `请回复一个${模型名称}`; the proxy selects `/responses`, `/v1/messages`, or `/chat/completions` from the model's declared supported endpoints
 - Configure global rate limiting from the Settings tab
+
+`activeAccountId` is an administrative preference only. API requests from proxy clients are scheduled automatically across all enabled accounts by client namespace, protocol session, model support, account health, and active load.
 
 ## Environment Variables
 
@@ -229,9 +238,9 @@ The admin panel allows you to:
 
 ```yaml
 services:
-  copilot-api:
-    image: ghcr.io/yuegongzi/copilot-api:latest
-    container_name: copilot-api
+  copilot-api-muluser:
+    image: tamakiramimy/copilot-api-muluser:latest
+    container_name: copilot-api-muluser
     ports:
       - "127.0.0.1:4141:4141"
     volumes:
@@ -321,7 +330,7 @@ More options: [Claude Code settings](https://docs.anthropic.com/en/docs/claude-c
 If you want Claude Code to inject an extra marker during the `SubagentStart` hook so `copilot-api` can more reliably distinguish initiator overrides, you can install the optional plugin directly from this repository:
 
 ```bash
-/plugin marketplace add https://github.com/yuegongzi/copilot-api.git
+/plugin marketplace add https://github.com/tamakiramimy/copilot-api-muluser.git
 /plugin install copilot-api-subagent-marker@copilot-api-marketplace
 ```
 
@@ -359,7 +368,7 @@ The configuration file is stored at `/data/copilot-api/config.json` inside the c
 | Key | Description |
 |-----|-------------|
 | `accounts` | List of configured GitHub accounts |
-| `activeAccountId` | Currently active account ID |
+| `activeAccountId` | Administrative default for Models, Usage, and manual tests; it does not force proxy clients onto this account |
 | `extraPrompts` | Per-model prompts appended to system messages |
 | `smallModel` | Fallback model for warmup requests (default: `gpt-5-mini`) |
 | `modelReasoningEfforts` | Per-model reasoning effort (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) |
@@ -403,7 +412,11 @@ bun run knip
 
 - **Rate Limiting**: Use `RATE_LIMIT` to prevent hitting GitHub's rate limits. Set `RATE_LIMIT_WAIT=true` to queue requests instead of returning errors.
 - **Business/Enterprise Accounts**: The account type is automatically detected during OAuth flow.
-- **Multiple Accounts**: Add multiple accounts via `/admin` and switch between them as needed.
+- **Multiple Accounts**: Add multiple accounts via `/admin`; proxy client sessions are automatically distributed across eligible accounts. Use the active-account switch only to inspect a specific account's Models, Usage, or model test result.
+
+## Docker Images
+
+Published images are available at [Docker Hub](https://hub.docker.com/r/tamakiramimy/copilot-api-muluser). Each timestamp release uses an immutable UTC tag in the form `vYYYYmmddHHmmss`; `latest` tracks the newest successful release. Images are multi-platform for `linux/amd64` and `linux/arm64`.
 
 ## Premium Interaction Notes
 
